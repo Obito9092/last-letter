@@ -1,0 +1,115 @@
+local TableConfig = {}
+
+TableConfig.Tables = {
+	{
+		Name = "Table1",
+		MaxPlayers = 2,
+		Path = "2 Players/Table1",
+		TableName = "Table1",
+		RemoteEventName = "ChairEvent_Table1",
+		Chairs = {"Chair1", "Chair2"}
+	},
+	{
+		Name = "Table2",
+		MaxPlayers = 2,
+		Path = "2 Players/Table2",
+		TableName = "Table2",
+		RemoteEventName = "ChairEvent_Table2",
+		Chairs = {"Chair1", "Chair2"}
+	},
+	{
+		Name = "Table3",
+		MaxPlayers = 2,
+		Path = "2 Players/Table3",
+		TableName = "Table3",
+		RemoteEventName = "ChairEvent_Table3",
+		Chairs = {"Chair1", "Chair2"}
+	},
+	{
+		Name = "Table4",
+		MaxPlayers = 2,
+		Path = "2 Players/Table4",
+		TableName = "Table4",
+		RemoteEventName = "ChairEvent_Table4",
+		Chairs = {"Chair1", "Chair2"}
+	},
+	{
+		Name = "Table21",
+		MaxPlayers = 3,
+		Path = "3 Players/Table21",
+		TableName = "Table21",
+		RemoteEventName = "ChairEvent_Table21",
+		Chairs = {"Chair1", "Chair2", "Chair3"}
+	},
+	{
+		Name = "Table22",
+		MaxPlayers = 3,
+		Path = "3 Players/Table22",
+		TableName = "Table22",
+		RemoteEventName = "ChairEvent_Table22",
+		Chairs = {"Chair1", "Chair2", "Chair3"}
+	},
+	{
+		Name = "Table23",
+		MaxPlayers = 3,
+		Path = "3 Players/Table23",
+		TableName = "Table23",
+		RemoteEventName = "ChairEvent_Table23",
+		Chairs = {"Chair1", "Chair2", "Chair3"}
+	},
+	{
+		Name = "Table24",
+		MaxPlayers = 3,
+		Path = "3 Players/Table24",
+		TableName = "Table24",
+		RemoteEventName = "ChairEvent_Table24",
+		Chairs = {"Chair1", "Chair2", "Chair3"}
+	},
+	{
+		Name = "Table41",
+		MaxPlayers = 4,
+		Path = "4 Players/Table41",
+		TableName = "Table41",
+		RemoteEventName = "ChairEvent_Table41",
+		Chairs = {"Chair1", "Chair2", "Chair3", "Chair4"}
+	},
+	{
+		Name = "Table42",
+		MaxPlayers = 4,
+		Path = "4 Players/Table42",
+		TableName = "Table42",
+		RemoteEventName = "ChairEvent_Table42",
+		Chairs = {"Chair1", "Chair2", "Chair3", "Chair4"}
+	},
+	{
+		Name = "Table43",
+		MaxPlayers = 4,
+		Path = "4 Players/Table43",
+		TableName = "Table43",
+		RemoteEventName = "ChairEvent_Table43",
+		Chairs = {"Chair1", "Chair2", "Chair3", "Chair4"}
+	},
+	{
+		Name = "Table44",
+		MaxPlayers = 4,
+		Path = "4 Players/Table44",
+		TableName = "Table44",
+		RemoteEventName = "ChairEvent_Table44",
+		Chairs = {"Chair1", "Chair2", "Chair3", "Chair4"}
+	}
+}
+
+function TableConfig:GetTableByPath(path)
+	for _, config in ipairs(self.Tables) do
+		if config.Path == path then
+			return config
+		end
+	end
+	return nil
+end
+
+function TableConfig:GetAllTables()
+	return self.Tables
+end
+
+return TableConfig
