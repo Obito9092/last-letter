@@ -1,0 +1,1150 @@
+local TableManager = {}
+TableManager.__index = TableManager
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local HttpService = game:GetService("HttpService")
+local TweenService = game:GetService("TweenService")
+
+local GunService = require(script.Parent.GunService)
+local TableConfig = require(ReplicatedStorage.Modules.TableConfig)
+
+local function checkWordAPI(word)
+	if #word < 2 or not word:match("^[a-zA-Z ]+$") then
+		return false
+	end
+	local cleanWord = word:gsub("%s+", "")
+	if #cleanWord < 2 then
+		return false
+	end
+	local success1, result1 = pcall(function()
+		local url = "https://api.dictionaryapi.dev/api/v2/entries/en/" .. cleanWord:lower()
+		return HttpService:GetAsync(url)
+	end)
+	if success1 and result1 then
+		local decoded = pcall(function()
+			return HttpService:JSONDecode(result1)
+		end)
+		if decoded then
+			local data = HttpService:JSONDecode(result1)
+			if type(data) == "table" and #data > 0 and data[1].meanings then
+				return true
+			end
+		end
+	end
+	return false
+end
+
+function TableManager.new(tablePath, playerDataCache)
+	local self = setmetatable({}, TableManager)
+	self.playerDataCache = playerDataCache
+	self.config = TableConfig:GetTableByPath(tablePath)
+	if not self.config then 
+		warn("Invalid table path:", tablePath) 
+		return nil 
+	end
+
+	print(string.format("🔍 Searching for table: %s (Path: %s)", self.config.TableName, tablePath))
+	local parentFolderName = string.match(tablePath, "(.+)/[^/]+$")
+	local tableName = self.config.TableName
+
+	if parentFolderName then
+		print(string.format("  Looking in folder: '%s' for table '%s'", parentFolderName, tableName))
+		local parentFolder = workspace:FindFirstChild(parentFolderName)
+		if parentFolder then
+			print(string.format("  ✅ Found parent folder: %s", parentFolderName))
+			self.tableFolder = parentFolder:FindFirstChild(tableName)
+		else
+			warn(string.format("  ❌ Parent folder '%s' not found in workspace", parentFolderName))
+			return nil
+		end
+	else
+		print(string.format("  Looking directly in workspace for '%s'", tableName))
+		self.tableFolder = workspace:FindFirstChild(tableName)
+	end
+
+	if not self.tableFolder then
+		warn(string.format("❌ Table folder '%s' not found", tableName))
+		return nil
+	end
+	print(string.format("  ✅ Found table folder: %s", tableName))
+
+	self.tableObject = self.tableFolder:FindFirstChild("Table") or self.tableFolder:FindFirstChild("Table2") or self.tableFolder:FindFirstChild("Table4")
+	if not self.tableObject then 
+		warn(string.format("  ❌ No Table object inside '%s'", tableName))
+		return nil 
+	end
+	print(string.format("  ✅ Found Table object in %s", tableName))
+
+	self.proximityPrompt = self.tableObject:FindFirstChildWhichIsA("ProximityPrompt", true)
+
+	self.guiPart = self.tableFolder:FindFirstChild("Gui1", true)
+	if not self.guiPart then
+		warn(string.format("  ❌ No Gui1 part found in %s", tableName))
+		return nil
+	end
+
+	self.guiPartForCount = self.tableFolder:FindFirstChild("Gui", true)
+	if self.guiPartForCount then
+		print(string.format("  ✅ Found Gui part for player count in %s", tableName))
+	else
+		warn(string.format("  ⚠️ No Gui part found for player count in %s", tableName))
+	end
+
+	self.maxPlayers = self.config.MaxPlayers
+	self.chairs = {}
+	self.players = {}
+	self.playerReady = {}
+	self.seatedPlayers = {}
+	self.chairConnections = {}
+	self.playerBodyPositions = {}
+	self.seatCheckLoops = {}
+
+	for i, chairName in ipairs(self.config.Chairs) do
+		local chair = self.tableFolder:FindFirstChild(chairName, true)
+		if chair then 
+			self.chairs[i] = chair
+			local seat = chair:FindFirstChild("Seat")
+			if seat and seat:IsA("Seat") then
+				seat.Disabled = true
+			end
+			print(string.format("  ✅ Found chair: %s", chairName))
+		else
+			warn(string.format("  ⚠️ Chair '%s' not found in %s", chairName, tableName))
+		end
+	end
+
+	self.gameState = "WAITING_PLAYERS"
+	self.playerChoices = {}
+	self.playerHearts = {}
+	self.playerXAttempts = {}
+	self.whoChoosesLetter = nil
+	self.currentLetter = ""
+	self.usedWords = {}
+	self.timerThread = nil
+	self.whoTypes = nil
+	self.lastWord = ""
+	self.matchStartTime = 0
+	self.currentTimerRemaining = 0
+
+	for i = 1, self.maxPlayers do
+		self.playerHearts[i] = 3
+		self.playerXAttempts[i] = 5
+	end
+
+	local remoteEvent = ReplicatedStorage:FindFirstChild(self.config.RemoteEventName)
+	if not remoteEvent then
+		remoteEvent = Instance.new("RemoteEvent")
+		remoteEvent.Name = self.config.RemoteEventName
+		remoteEvent.Parent = ReplicatedStorage
+		print(string.format("  📡 Created remote event: %s", self.config.RemoteEventName))
+	end
+	self.remoteEvent = remoteEvent
+
+	self:InitializeGUI()
+	self:SetupProximityPrompt()
+	self:SetupRemoteEvents()
+
+	print(string.format("✅ Table '%s' fully initialized (%d players)", self.config.Name, self.maxPlayers))
+	return self
+end
+
+function TableManager:InitializeGUI()
+	if not self.guiPart then 
+		warn(string.format("  ⚠️ No Gui part found in %s", self.config.Name))
+		return 
+	end
+
+	print(string.format("  🖥️ Initializing GUI for %s", self.config.Name))
+
+	local gui1 = self.guiPart:FindFirstChild("Gui1")
+	if gui1 then
+		local textLabel = gui1:FindFirstChild("TextLabel")
+		if textLabel then 
+			textLabel.Text = "0/" .. self.maxPlayers
+			print(string.format("    ✅ Set gui1 TextLabel to '0/%d'", self.maxPlayers))
+		end
+	end
+
+	local gui2 = self.guiPart:FindFirstChild("gui2")
+	if gui2 then
+		local textLabel = gui2:FindFirstChild("TextLabel")
+		if textLabel then 
+			textLabel.Text = "0/" .. self.maxPlayers
+			print(string.format("    ✅ Set gui2 TextLabel to '0/%d'", self.maxPlayers))
+		end
+	end
+end
+
+function TableManager:GetOccupiedCount()
+	local count = 0
+	for i = 1, self.maxPlayers do
+		if self.players[i] and self.playerReady[i] then 
+			count = count + 1 
+		end
+	end
+	return count
+end
+
+function TableManager:UpdateGUI()
+	if not self.guiPart then return end
+	local count = self:GetOccupiedCount()
+	local displayText = count == self.maxPlayers and "Max" or tostring(count) .. "/" .. self.maxPlayers
+
+	for i = 1, 2 do
+		local gui = self.guiPart:FindFirstChild("gui" .. i)
+		if gui then
+			local textLabel = gui:FindFirstChild("TextLabel")
+			if textLabel then 
+				textLabel.Text = displayText 
+			end
+		end
+	end
+end
+
+function TableManager:HasEmptyChair()
+	for i = 1, self.maxPlayers do
+		if not (self.players[i] and self.playerReady[i]) then 
+			return true 
+		end
+	end
+	return false
+end
+
+function TableManager:UpdatePromptVisibility()
+	if self.joinGui then
+		local shouldShow = self:HasEmptyChair() and self.gameState == "WAITING_PLAYERS"
+		self.joinGui.Enabled = shouldShow
+	end
+	if self.proximityPrompt then
+		self.proximityPrompt.Enabled = false
+	end
+	self:UpdateGUI()
+end
+
+function TableManager:GetEmptyChairIndex()
+	for i = 1, self.maxPlayers do
+		if not (self.players[i] and self.playerReady[i]) then 
+			return i 
+		end
+	end
+	return nil
+end
+
+function TableManager:GetPlayerIndex(player)
+	for i = 1, self.maxPlayers do
+		if self.players[i] == player then 
+			return i 
+		end
+	end
+	return nil
+end
+
+function TableManager:UpdateHearts(playerIndex)
+	if self.players[playerIndex] then
+		self.remoteEvent:FireClient(self.players[playerIndex], "UpdateHearts", self.playerHearts[playerIndex])
+	end
+end
+
+function TableManager:UpdateXAttempts(playerIndex)
+	if self.players[playerIndex] then
+		self.remoteEvent:FireClient(self.players[playerIndex], "UpdateXAttempts", self.playerXAttempts[playerIndex])
+	end
+end
+
+function TableManager:UpdateExitButtonVisibility()
+	local show = self.gameState == "WAITING_PLAYERS" and self:GetOccupiedCount() < self.maxPlayers
+	for _, player in pairs(Players:GetPlayers()) do
+		if self.seatedPlayers[player.UserId] then
+			self.remoteEvent:FireClient(player, "ShowExitButton", show)
+			self.remoteEvent:FireClient(player, "ShowAddFriend", show)
+		end
+	end
+end
+
+function TableManager:StopTimer()
+	if self.timerThread then
+		task.cancel(self.timerThread)
+		self.timerThread = nil
+	end
+	self.currentTimerRemaining = 0
+end
+
+function TableManager:StartTimer(seconds, onComplete)
+	self:StopTimer()
+	local timeLeft = seconds
+	self.currentTimerRemaining = timeLeft
+
+	for i = 1, self.maxPlayers do
+		if self.players[i] then
+			self.remoteEvent:FireClient(self.players[i], "UpdateTimer", timeLeft)
+		end
+	end
+
+	self.timerThread = task.spawn(function()
+		while timeLeft > 0 do
+			task.wait(1)
+			timeLeft = timeLeft - 1
+			self.currentTimerRemaining = timeLeft
+			for i = 1, self.maxPlayers do
+				if self.players[i] then
+					self.remoteEvent:FireClient(self.players[i], "UpdateTimer", timeLeft)
+				end
+			end
+		end
+
+		for i = 1, self.maxPlayers do
+			if self.players[i] then
+				self.remoteEvent:FireClient(self.players[i], "UpdateTimer", 0)
+			end
+		end
+
+		self.currentTimerRemaining = 0
+
+		if onComplete then
+			onComplete()
+		end
+	end)
+end
+
+function TableManager:AnimateHeartLoss(playerIndex)
+	if self.players[playerIndex] then
+		self.remoteEvent:FireClient(self.players[playerIndex], "AnimateHeartLoss", playerIndex)
+	end
+end
+
+function TableManager:PlayKillAnimation(killerPlayer, victimPlayer)
+	if not killerPlayer or not victimPlayer then return end
+
+	local killerData = self.playerDataCache[killerPlayer.UserId]
+	if not killerData or not killerData.EquippedGun then 
+		print("SERVER: Killer has no equipped gun, skipping animation")
+		return 
+	end
+
+	print(string.format("SERVER: Playing kill animation - %s shoots %s with %s", killerPlayer.Name, victimPlayer.Name, killerData.EquippedGun))
+
+	GunService:MoveGunToHand(killerPlayer, killerData.EquippedGun)
+
+	local victimIndex = self:GetPlayerIndex(victimPlayer)
+
+	for i = 1, self.maxPlayers do
+		if self.players[i] then
+			self.remoteEvent:FireClient(self.players[i], "PlayKillSequence", {
+				Killer = killerPlayer.Name,
+				Victim = victimPlayer.Name,
+				Gun = killerData.EquippedGun,
+				KillerIndex = self:GetPlayerIndex(killerPlayer),
+				VictimIndex = victimIndex
+			})
+		end
+	end
+
+	task.wait(3)
+
+	GunService:MoveGunToBack(killerPlayer, killerData.EquippedGun)
+end
+
+function TableManager:CalculateMatchRewards(winner)
+	local matchDuration = tick() - self.matchStartTime
+	local winnerIndex = self:GetPlayerIndex(winner)
+	local damageDealt = (3 - self.playerHearts[winnerIndex]) * 50
+	local coinsForMatch = 250
+	local winBonus = 100
+	local totalCoins = coinsForMatch + winBonus
+
+	return {
+		Damage = damageDealt,
+		CoinsForMatch = coinsForMatch,
+		WinBonus = winBonus,
+		TotalCoins = totalCoins
+	}
+end
+
+function TableManager:GiveRewards(winner, loser)
+	local leaderstats = winner:FindFirstChild("leaderstats")
+	if not leaderstats then
+		leaderstats = Instance.new("Folder")
+		leaderstats.Name = "leaderstats"
+		leaderstats.Parent = winner
+	end
+	local wins = leaderstats:FindFirstChild("Wins")
+	if not wins then
+		wins = Instance.new("IntValue")
+		wins.Name = "Wins"
+		wins.Value = 0
+		wins.Parent = leaderstats
+	end
+	wins.Value = wins.Value + 1
+	local cash = leaderstats:FindFirstChild("Cash")
+	if not cash then
+		cash = Instance.new("IntValue")
+		cash.Name = "Cash"
+		cash.Value = 0
+		cash.Parent = leaderstats
+	end
+
+	local rewards = self:CalculateMatchRewards(winner)
+	cash.Value = cash.Value + rewards.TotalCoins
+
+	self.remoteEvent:FireClient(winner, "ShowMatchResults", {
+		Won = true,
+		Damage = rewards.Damage,
+		CoinsForMatch = rewards.CoinsForMatch,
+		WinBonus = rewards.WinBonus,
+		TotalCoins = rewards.TotalCoins
+	})
+
+	if loser then
+		self.remoteEvent:FireClient(loser, "ShowMatchResults", {
+			Won = false,
+			Damage = 0,
+			CoinsForMatch = 0,
+			WinBonus = 0,
+			TotalCoins = 0
+		})
+	end
+end
+
+function TableManager:EndGame(winner, disconnectWin)
+	print("SERVER: Game ending, winner:", winner.Name)
+	self.gameState = "GAME_OVER"
+	self:StopTimer()
+
+	local loser = nil
+	for i = 1, self.maxPlayers do
+		if self.players[i] and self.players[i] ~= winner then
+			loser = self.players[i]
+			break
+		end
+	end
+
+	if disconnectWin then
+		local leaderstats = winner:FindFirstChild("leaderstats")
+		if not leaderstats then
+			leaderstats = Instance.new("Folder")
+			leaderstats.Name = "leaderstats"
+			leaderstats.Parent = winner
+		end
+		local cash = leaderstats:FindFirstChild("Cash")
+		if not cash then
+			cash = Instance.new("IntValue")
+			cash.Name = "Cash"
+			cash.Value = 0
+			cash.Parent = leaderstats
+		end
+		cash.Value = cash.Value + 100
+
+		self.remoteEvent:FireClient(winner, "ShowMatchResults", {
+			Won = true,
+			Damage = 0,
+			CoinsForMatch = 100,
+			WinBonus = 0,
+			TotalCoins = 100
+		})
+	else
+		if loser then
+			self:GiveRewards(winner, loser)
+		end
+	end
+
+	task.wait(5)
+	for i = 1, self.maxPlayers do
+		if self.players[i] then
+			self:CleanupPlayer(self.players[i], i)
+		end
+	end
+end
+
+function TableManager:LoseHeart(playerIndex)
+	if not self.players[playerIndex] then
+		print("SERVER: Cannot lose heart - player not found")
+		return true
+	end
+
+	self.playerHearts[playerIndex] = self.playerHearts[playerIndex] - 1
+	print(string.format("SERVER: %s lost a heart! Hearts remaining: %d", self.players[playerIndex].Name, self.playerHearts[playerIndex]))
+
+	local winnerIndex = nil
+	for i = 1, self.maxPlayers do
+		if i ~= playerIndex and self.players[i] then
+			winnerIndex = i
+			break
+		end
+	end
+
+	self:AnimateHeartLoss(playerIndex)
+
+	if winnerIndex then
+		self:PlayKillAnimation(self.players[winnerIndex], self.players[playerIndex])
+	end
+
+	self:UpdateHearts(playerIndex)
+
+	if self.playerHearts[playerIndex] <= 0 then
+		print(string.format("SERVER: %s has no hearts left - GAME OVER", self.players[playerIndex].Name))
+		if winnerIndex and self.players[winnerIndex] then
+			self:EndGame(self.players[winnerIndex], false)
+		end
+		return true
+	end
+	return false
+end
+
+function TableManager:AnchorPlayer(player, chairIndex)
+	if not player or not player.Character then return end
+	local hrp = player.Character:FindFirstChild("HumanoidRootPart")
+	if not hrp then return end
+	if self.playerBodyPositions[player.UserId] then 
+		self.playerBodyPositions[player.UserId]:Destroy() 
+	end
+	local chair = self.chairs[chairIndex]
+	local seat = chair and (chair:FindFirstChild("Seat") or chair)
+	if seat then
+		hrp.CFrame = seat.CFrame * CFrame.new(0, 2, 0)
+		hrp.Anchored = true
+		local bodyPos = Instance.new("BodyPosition")
+		bodyPos.MaxForce = Vector3.new(50000, 50000, 50000)
+		bodyPos.P = 15000
+		bodyPos.D = 800
+		bodyPos.Position = seat.Position + Vector3.new(0, 2, 0)
+		bodyPos.Parent = hrp
+		self.playerBodyPositions[player.UserId] = bodyPos
+	end
+end
+
+function TableManager:UnanchorPlayer(player)
+	if not player or not player.Character then return end
+	local hrp = player.Character:FindFirstChild("HumanoidRootPart")
+	if hrp then 
+		hrp.Anchored = false 
+	end
+	if self.playerBodyPositions[player.UserId] then
+		self.playerBodyPositions[player.UserId]:Destroy()
+		self.playerBodyPositions[player.UserId] = nil
+	end
+end
+
+function TableManager:MaintainSeatPosition(player, chairIndex)
+	self.seatCheckLoops[player.UserId] = false
+	task.wait(0.1)
+	self.seatCheckLoops[player.UserId] = true
+	task.spawn(function()
+		while self.seatCheckLoops[player.UserId] and player.Character do
+			local hrp = player.Character:FindFirstChild("HumanoidRootPart")
+			local chair = self.chairs[chairIndex]
+			local seat = chair and (chair:FindFirstChild("Seat") or chair)
+			if hrp and seat then
+				local targetPos = seat.Position + Vector3.new(0, 2, 0)
+				if (hrp.Position - targetPos).Magnitude > 10 then
+					hrp.CFrame = CFrame.new(targetPos)
+					self:AnchorPlayer(player, chairIndex)
+				end
+			else
+				break
+			end
+			task.wait(0.5)
+		end
+	end)
+end
+
+function TableManager:VerifyAllPlayersReady()
+	if self.gameState ~= "WAITING_PLAYERS" then return false end
+	for i = 1, self.maxPlayers do
+		if not self.players[i] or not self.playerReady[i] then return false end
+		if not self.players[i].Character then return false end
+		if not self.players[i].Character:FindFirstChild("HumanoidRootPart") then return false end
+	end
+	return true
+end
+
+function TableManager:DetermineRPSWinner()
+	print("SERVER: Determining RPS winner...")
+	local choices = {}
+	for i = 1, self.maxPlayers do 
+		choices[i] = self.playerChoices[i] 
+	end
+	local rpsMap = {A = "Rock", B = "Paper", C = "Scissors"}
+	local uniqueChoices = {}
+	for _, choice in pairs(choices) do 
+		if choice then 
+			uniqueChoices[choice] = true 
+		end 
+	end
+	local uniqueCount = 0
+	for _ in pairs(uniqueChoices) do 
+		uniqueCount = uniqueCount + 1 
+	end
+	if uniqueCount >= 3 or uniqueCount == 1 then
+		print("SERVER: Tie detected, replaying...")
+		for i = 1, self.maxPlayers do
+			self.remoteEvent:FireClient(self.players[i], "ShowRPSResult", "Tie! Play again")
+		end
+		task.wait(3)
+		for i = 1, self.maxPlayers do
+			self.playerChoices[i] = nil
+			self.remoteEvent:FireClient(self.players[i], "ShowRPS")
+		end
+		return
+	end
+	local winners = {}
+	for i = 1, self.maxPlayers do
+		local myChoice = choices[i]
+		local won = true
+		for j = 1, self.maxPlayers do
+			if i ~= j then
+				local theirChoice = choices[j]
+				if (myChoice == "A" and theirChoice == "B") or (myChoice == "B" and theirChoice == "C") or (myChoice == "C" and theirChoice == "A") then
+					won = false
+				end
+			end
+		end
+		if won then 
+			table.insert(winners, i) 
+		end
+	end
+	if #winners > 0 then
+		local winnerIndex = winners[1]
+		local winnerName = self.players[winnerIndex].Name
+		local winnerChoice = rpsMap[choices[winnerIndex]]
+		print(string.format("SERVER: Winner is %s with %s", winnerName, winnerChoice))
+		for i = 1, self.maxPlayers do
+			if i == winnerIndex then
+				self.remoteEvent:FireClient(self.players[i], "ShowRPSResult", "You won! Choose letter")
+			else
+				self.remoteEvent:FireClient(self.players[i], "ShowRPSResult", winnerName .. " won with " .. winnerChoice)
+			end
+		end
+		self.whoChoosesLetter = winnerIndex
+		task.wait(3)
+		self:ShowLetterSelection()
+	end
+end
+
+function TableManager:ShowLetterSelection()
+	if not self.whoChoosesLetter then return end
+	print("SERVER: Showing letter selection...")
+	local letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	local randomLetters = {}
+	for _ = 1, 4 do
+		local randomIndex = math.random(1, 26)
+		table.insert(randomLetters, letters:sub(randomIndex, randomIndex))
+	end
+	for i = 1, self.maxPlayers do
+		if i == self.whoChoosesLetter then
+			self.remoteEvent:FireClient(self.players[i], "ShowLetterChoice", randomLetters)
+			self.remoteEvent:FireClient(self.players[i], "FocusCameraOnSelf")
+		else
+			self.remoteEvent:FireClient(self.players[i], "WaitingForLetter")
+			self.remoteEvent:FireClient(self.players[i], "FocusCameraOnPlayer", self.players[self.whoChoosesLetter].Name)
+		end
+	end
+	self:StartTimer(15, function()
+		print("SERVER: Letter selection timeout - losing heart")
+		if not self.players[self.whoChoosesLetter] then
+			print("SERVER: Player disconnected during timer")
+			return
+		end
+
+		for i = 1, self.maxPlayers do
+			if self.players[i] then
+				self.remoteEvent:FireClient(self.players[i], "ShowError", "Time's up! -1 Heart 💔")
+			end
+		end
+
+		task.wait(2)
+		local gameEnded = self:LoseHeart(self.whoChoosesLetter)
+		if not gameEnded then
+			self.whoChoosesLetter = (self.whoChoosesLetter % self.maxPlayers) + 1
+			task.wait(1)
+			self:ShowLetterSelection()
+		end
+	end)
+end
+
+function TableManager:StartTypingRound()
+	print("SERVER: Starting typing round with letter:", self.currentLetter)
+	self.gameState = "TYPING"
+	self.whoTypes = (self.whoChoosesLetter % self.maxPlayers) + 1
+	for i = 1, self.maxPlayers do
+		if i == self.whoTypes then
+			self.remoteEvent:FireClient(self.players[i], "StartTyping", self.currentLetter)
+			self.remoteEvent:FireClient(self.players[i], "FocusCameraOnSelf")
+		else
+			self.remoteEvent:FireClient(self.players[i], "WaitingForTyping", self.players[self.whoTypes].Name)
+			self.remoteEvent:FireClient(self.players[i], "FocusCameraOnPlayer", self.players[self.whoTypes].Name)
+		end
+	end
+	self:StartTimer(15, function()
+		print("SERVER: Typing timeout - losing heart")
+		if not self.players[self.whoTypes] then
+			print("SERVER: Player disconnected during timer")
+			return
+		end
+
+		for i = 1, self.maxPlayers do
+			if self.players[i] then
+				self.remoteEvent:FireClient(self.players[i], "ShowError", "Time's up! -1 Heart 💔")
+				self.remoteEvent:FireClient(self.players[i], "ClearTypingText")
+			end
+		end
+
+		task.wait(2)
+		local gameEnded = self:LoseHeart(self.whoTypes)
+		if not gameEnded then
+			self.whoChoosesLetter = self.whoTypes
+			task.wait(1)
+			self:ShowLetterSelection()
+		end
+	end)
+end
+
+function TableManager:StartGame()
+	if self.gameState ~= "WAITING_PLAYERS" then 
+		print(string.format("SERVER: Cannot start - game state is %s", self.gameState))
+		return 
+	end
+	if not self:VerifyAllPlayersReady() then 
+		print("SERVER: Cannot start - players not ready")
+		return 
+	end
+	print(string.format("SERVER: Starting game at table %s", self.config.Name))
+	task.wait(1)
+	if not self:VerifyAllPlayersReady() then 
+		print("SERVER: Players left during countdown")
+		return 
+	end
+
+	for i = 1, self.maxPlayers do
+		local player = self.players[i]
+		if not player or not Players:FindFirstChild(player.Name) then 
+			print(string.format("SERVER: Player %d missing", i))
+			return 
+		end
+		local data = self.playerDataCache[player.UserId]
+		if not data then
+			print(string.format("SERVER: No data for %s", player.Name))
+			self.remoteEvent:FireClient(player, "ShowNoWeaponError", "Equip a weapon first!")
+			task.wait(3)
+			self:CleanupPlayer(player, i)
+			return
+		elseif not data.EquippedGun then
+			print(string.format("SERVER: %s has no equipped gun", player.Name))
+			self.remoteEvent:FireClient(player, "ShowNoWeaponError", "Equip a weapon first!")
+			task.wait(3)
+			self:CleanupPlayer(player, i)
+			return
+		else
+			print(string.format("SERVER: %s has gun: %s", player.Name, data.EquippedGun))
+		end
+	end
+
+	self.gameState = "RPS"
+	for i = 1, self.maxPlayers do
+		self.playerHearts[i] = 3
+		self.playerXAttempts[i] = 5
+		self.playerChoices[i] = nil
+	end
+	self.matchStartTime = tick()
+	self.whoChoosesLetter = nil
+	self.usedWords = {}
+	self.lastWord = ""
+	for i = 1, self.maxPlayers do
+		local player = self.players[i]
+		self:UpdateHearts(i)
+		self:UpdateXAttempts(i)
+		self.remoteEvent:FireClient(player, "LockCamera", true)
+	end
+	self:UpdateExitButtonVisibility()
+	self:UpdatePromptVisibility()
+	task.wait(0.5)
+	for i = 1, self.maxPlayers do
+		self.remoteEvent:FireClient(self.players[i], "ShowRPS")
+		print(string.format("SERVER: Sent ShowRPS to %s", self.players[i].Name))
+	end
+end
+
+function TableManager:SitPlayer(player, chairIndex)
+	if not player or self.seatedPlayers[player.UserId] then return end
+	if self.gameState ~= "WAITING_PLAYERS" then return end
+	if self.players[chairIndex] then return end
+	print(string.format("SERVER: %s sitting at %s chair %d", player.Name, self.config.Name, chairIndex))
+	local character = player.Character
+	if not character then return end
+	local humanoid = character:FindFirstChild("Humanoid")
+	local hrp = character:FindFirstChild("HumanoidRootPart")
+	if not humanoid or not hrp then return end
+	self.players[chairIndex] = player
+	self.playerReady[chairIndex] = false
+	self.seatedPlayers[player.UserId] = true
+	self.remoteEvent:FireClient(player, "UpdateSeatStatus", true)
+	self:UpdatePromptVisibility()
+	local chair = self.chairs[chairIndex]
+	local seat = chair and (chair:FindFirstChild("Seat") or chair)
+	if seat then
+		hrp.CFrame = seat.CFrame * CFrame.new(0, 2, 0)
+		task.wait(0.1)
+	end
+	humanoid.Sit = true
+	humanoid.WalkSpeed = 0
+	humanoid.JumpPower = 0
+	for _, child in pairs(character:GetDescendants()) do
+		if child:IsA("BasePart") then 
+			child.Anchored = false 
+		end
+	end
+	self:AnchorPlayer(player, chairIndex)
+	self:MaintainSeatPosition(player, chairIndex)
+	self.remoteEvent:FireClient(player, "PlayerSat", true)
+	task.wait(0.3)
+	self.playerReady[chairIndex] = true
+	print(string.format("SERVER: Chair %d ready at %s", chairIndex, self.config.Name))
+	self:UpdatePromptVisibility()
+	self:UpdateExitButtonVisibility()
+	if self:VerifyAllPlayersReady() then
+		print(string.format("SERVER: All players ready at %s - Starting game in 2 seconds", self.config.Name))
+		task.wait(2)
+		if self:VerifyAllPlayersReady() then
+			print(string.format("SERVER: Verified again, calling StartGame for %s", self.config.Name))
+			self:StartGame()
+		else
+			print(string.format("SERVER: Players no longer ready at %s", self.config.Name))
+		end
+	else
+		print(string.format("SERVER: Not all players ready yet at %s (%d/%d)", self.config.Name, self:GetOccupiedCount(), self.maxPlayers))
+	end
+	if self.chairConnections[player.UserId] then
+		pcall(function() self.chairConnections[player.UserId]:Disconnect() end)
+	end
+	self.chairConnections[player.UserId] = humanoid.Seated:Connect(function(active)
+		if not active and self.gameState == "WAITING_PLAYERS" then
+			self:CleanupPlayer(player, chairIndex)
+		end
+	end)
+	humanoid.Died:Connect(function()
+		if self.gameState ~= "WAITING_PLAYERS" then
+			local otherPlayerIndex = nil
+			for i = 1, self.maxPlayers do
+				if i ~= chairIndex and self.players[i] then
+					otherPlayerIndex = i
+					break
+				end
+			end
+			if otherPlayerIndex then
+				self:EndGame(self.players[otherPlayerIndex], true)
+			end
+		else
+			self:CleanupPlayer(player, chairIndex)
+		end
+	end)
+end
+
+function TableManager:CleanupPlayer(player, chairIndex)
+	if not player then return end
+	print(string.format("SERVER: Cleaning up %s from %s", player.Name, self.config.Name))
+
+	if self.gameState ~= "WAITING_PLAYERS" and self.gameState ~= "GAME_OVER" then
+		print("SERVER: Player left during game - Ending match")
+		local otherPlayerIndex = nil
+		for i = 1, self.maxPlayers do
+			if self.players[i] and self.players[i] ~= player then
+				otherPlayerIndex = i
+				break
+			end
+		end
+
+		if otherPlayerIndex then
+			self:EndGame(self.players[otherPlayerIndex], true)
+		end
+
+		self.gameState = "WAITING_PLAYERS"
+	end
+
+	self.seatCheckLoops[player.UserId] = false
+	self:UnanchorPlayer(player)
+	pcall(function() GunService:RemoveGun(player) end)
+	if chairIndex and self.players[chairIndex] == player then
+		self.players[chairIndex] = nil
+		self.playerReady[chairIndex] = nil
+	end
+	self.seatedPlayers[player.UserId] = nil
+	if self.chairConnections[player.UserId] then
+		pcall(function() self.chairConnections[player.UserId]:Disconnect() end)
+		self.chairConnections[player.UserId] = nil
+	end
+	if player.Character then
+		local humanoid = player.Character:FindFirstChild("Humanoid")
+		if humanoid then
+			humanoid.Sit = false
+			humanoid.WalkSpeed = 20
+			humanoid.JumpPower = 51
+		end
+	end
+	self.remoteEvent:FireClient(player, "LockCamera", false)
+	self.remoteEvent:FireClient(player, "HideAllGUI")
+	self.remoteEvent:FireClient(player, "ShowExitButton", false)
+	self.remoteEvent:FireClient(player, "ShowAddFriend", false)
+	self.remoteEvent:FireClient(player, "PlayerSat", false)
+	self.remoteEvent:FireClient(player, "UpdateSeatStatus", false)
+	self:UpdatePromptVisibility()
+	self:UpdateExitButtonVisibility()
+end
+
+function TableManager:SetupProximityPrompt()
+	if self.proximityPrompt then
+		self.proximityPrompt.Enabled = false
+	end
+
+	local gui2 = self.guiPart and self.guiPart:FindFirstChild("gui2")
+	local joinButton = gui2 and gui2:FindFirstChild("TextButton")
+
+	if joinButton and joinButton:IsA("TextButton") then
+		print(string.format("  ✅ Found Join TextButton in gui2 for %s", self.config.Name))
+
+		local clickDetector = self.guiPart:FindFirstChildOfClass("ClickDetector")
+		if not clickDetector then
+			clickDetector = Instance.new("ClickDetector")
+			clickDetector.MaxActivationDistance = 20
+			clickDetector.Parent = self.guiPart
+			print(string.format("  📌 Created ClickDetector for %s", self.config.Name))
+		end
+
+		clickDetector.MouseClick:Connect(function(player)
+			print(string.format("SERVER: Join button clicked by %s at %s", player.Name, self.config.Name))
+			if self.seatedPlayers[player.UserId] then 
+				print("  ⚠️ Player already seated")
+				return 
+			end
+			if self.gameState ~= "WAITING_PLAYERS" then 
+				print("  ⚠️ Game already started")
+				return 
+			end
+			local emptyChairIndex = self:GetEmptyChairIndex()
+			if emptyChairIndex then 
+				self:SitPlayer(player, emptyChairIndex) 
+			else
+				print("  ⚠️ No empty chairs")
+			end
+		end)
+
+		self.joinButton = joinButton
+		self.joinGui = gui2
+		self.joinClickDetector = clickDetector
+	else
+		warn(string.format("  ❌ TextButton NOT FOUND in gui2 for %s", self.config.Name))
+	end
+
+	self:UpdatePromptVisibility()
+end
+
+function TableManager:SetupRemoteEvents()
+	self.remoteEvent.OnServerEvent:Connect(function(player, action, data)
+		if not player or not player.Parent then return end
+		if action == "ExitChair" then
+			if self.gameState ~= "WAITING_PLAYERS" or self:GetOccupiedCount() >= self.maxPlayers then return end
+			local chairIndex = self:GetPlayerIndex(player)
+			if chairIndex then 
+				self:CleanupPlayer(player, chairIndex) 
+			end
+		elseif action == "MakeChoice" then
+			if self.gameState ~= "RPS" then return end
+			local chairIndex = self:GetPlayerIndex(player)
+			if chairIndex then
+				self.playerChoices[chairIndex] = data
+				print(string.format("SERVER: %s made choice: %s", player.Name, data))
+				local allChosen = true
+				for i = 1, self.maxPlayers do
+					if not self.playerChoices[i] then 
+						allChosen = false 
+						break 
+					end
+				end
+				if allChosen then
+					print("SERVER: All players chose, determining winner...")
+					self:DetermineRPSWinner()
+				end
+			end
+		elseif action == "ChooseLetter" then
+			local chairIndex = self:GetPlayerIndex(player)
+			if chairIndex == self.whoChoosesLetter then
+				self:StopTimer()
+				self.currentLetter = data:upper()
+				print(string.format("SERVER: %s chose letter: %s", player.Name, self.currentLetter))
+				for i = 1, self.maxPlayers do
+					self.remoteEvent:FireClient(self.players[i], "StartRound", self.currentLetter)
+				end
+				task.wait(2)
+				self:StartTypingRound()
+			end
+		elseif action == "SubmitWord" then
+			if self.gameState ~= "TYPING" then return end
+			local chairIndex = self:GetPlayerIndex(player)
+			if chairIndex ~= self.whoTypes then return end
+			self:StopTimer()
+			local word = data:lower()
+			local cleanWord = word:gsub("%s+", "")
+			for i = 1, self.maxPlayers do
+				self.remoteEvent:FireClient(self.players[i], "ClearDisplay")
+			end
+			if not cleanWord:match("^" .. self.currentLetter:lower()) then
+				print("SERVER: Word doesn't start with correct letter")
+				for i = 1, self.maxPlayers do
+					if self.players[i] then
+						self.remoteEvent:FireClient(self.players[i], "ShowError", "Wrong letter! -1 Attempt ❌")
+						self.remoteEvent:FireClient(self.players[i], "ClearTypingText")
+					end
+				end
+				task.wait(2)
+				self.playerXAttempts[chairIndex] = self.playerXAttempts[chairIndex] - 1
+				self:UpdateXAttempts(chairIndex)
+				if self.playerXAttempts[chairIndex] <= 0 then
+					self.playerXAttempts[chairIndex] = 5
+					self:UpdateXAttempts(chairIndex)
+					local gameEnded = self:LoseHeart(chairIndex)
+					if not gameEnded then
+						self.whoChoosesLetter = chairIndex
+						task.wait(1)
+						self:ShowLetterSelection()
+					end
+				else
+					for i = 1, self.maxPlayers do
+						if i == self.whoTypes then
+							self.remoteEvent:FireClient(self.players[i], "StartTyping", self.currentLetter)
+						else
+							self.remoteEvent:FireClient(self.players[i], "WaitingForTyping", self.players[self.whoTypes].Name)
+						end
+					end
+					self:StartTimer(15, function()
+						print("SERVER: Timer expired after wrong letter")
+						local timedOut = self:LoseHeart(self.whoTypes)
+						if not timedOut then
+							self.whoChoosesLetter = self.whoTypes
+							self:ShowLetterSelection()
+						end
+					end)
+				end
+				return
+			end
+			if self.usedWords[cleanWord] then
+				print("SERVER: Word already used")
+				for i = 1, self.maxPlayers do
+					if self.players[i] then
+						self.remoteEvent:FireClient(self.players[i], "ShowError", "Word already used! -1 Attempt ❌")
+						self.remoteEvent:FireClient(self.players[i], "ClearTypingText")
+					end
+				end
+				task.wait(2)
+				self.playerXAttempts[chairIndex] = self.playerXAttempts[chairIndex] - 1
+				self:UpdateXAttempts(chairIndex)
+				if self.playerXAttempts[chairIndex] <= 0 then
+					self.playerXAttempts[chairIndex] = 5
+					self:UpdateXAttempts(chairIndex)
+					local gameEnded = self:LoseHeart(chairIndex)
+					if not gameEnded then
+						self.whoChoosesLetter = chairIndex
+						task.wait(1)
+						self:ShowLetterSelection()
+					end
+				else
+					for i = 1, self.maxPlayers do
+						if i == self.whoTypes then
+							self.remoteEvent:FireClient(self.players[i], "StartTyping", self.currentLetter)
+						else
+							self.remoteEvent:FireClient(self.players[i], "WaitingForTyping", self.players[self.whoTypes].Name)
+						end
+					end
+					self:StartTimer(15, function()
+						print("SERVER: Timer expired after used word")
+						local timedOut = self:LoseHeart(self.whoTypes)
+						if not timedOut then
+							self.whoChoosesLetter = self.whoTypes
+							self:ShowLetterSelection()
+						end
+					end)
+				end
+				return
+			end
+			local isValid = checkWordAPI(cleanWord)
+			if not isValid then
+				print("SERVER: Invalid word")
+				for i = 1, self.maxPlayers do
+					if self.players[i] then
+						self.remoteEvent:FireClient(self.players[i], "ShowError", "Invalid word! -1 Attempt ❌")
+						self.remoteEvent:FireClient(self.players[i], "ClearTypingText")
+					end
+				end
+				task.wait(2)
+				self.playerXAttempts[chairIndex] = self.playerXAttempts[chairIndex] - 1
+				self:UpdateXAttempts(chairIndex)
+				if self.playerXAttempts[chairIndex] <= 0 then
+					self.playerXAttempts[chairIndex] = 5
+					self:UpdateXAttempts(chairIndex)
+					local gameEnded = self:LoseHeart(chairIndex)
+					if not gameEnded then
+						self.whoChoosesLetter = chairIndex
+						task.wait(1)
+						self:ShowLetterSelection()
+					end
+				else
+					for i = 1, self.maxPlayers do
+						if i == self.whoTypes then
+							self.remoteEvent:FireClient(self.players[i], "StartTyping", self.currentLetter)
+						else
+							self.remoteEvent:FireClient(self.players[i], "WaitingForTyping", self.players[self.whoTypes].Name)
+						end
+					end
+					self:StartTimer(15, function()
+						print("SERVER: Timer expired after invalid word")
+						local timedOut = self:LoseHeart(self.whoTypes)
+						if not timedOut then
+							self.whoChoosesLetter = self.whoTypes
+							self:ShowLetterSelection()
+						end
+					end)
+				end
+				return
+			end
+			self.usedWords[cleanWord] = true
+			self.playerXAttempts[chairIndex] = 5
+			self:UpdateXAttempts(chairIndex)
+			self.remoteEvent:FireClient(player, "ShowRPSResult", "Correct! ✅")
+			self.lastWord = cleanWord
+			local lastLetter = cleanWord:sub(-1):upper()
+			print(string.format("SERVER: Word accepted: %s, last letter: %s", cleanWord, lastLetter))
+			self.currentLetter = lastLetter
+			self.whoChoosesLetter = chairIndex
+			self.whoTypes = (chairIndex % self.maxPlayers) + 1
+			task.wait(2)
+			for i = 1, self.maxPlayers do
+				self.remoteEvent:FireClient(self.players[i], "StartRound", "Next: " .. self.currentLetter)
+			end
+			task.wait(2)
+			for i = 1, self.maxPlayers do
+				if i == self.whoTypes then
+					self.remoteEvent:FireClient(self.players[i], "StartTyping", self.currentLetter)
+				else
+					self.remoteEvent:FireClient(self.players[i], "WaitingForTyping", self.players[self.whoTypes].Name)
+				end
+			end
+			self:StartTimer(15, function()
+				print("SERVER: Typing timeout")
+				local gameEnded = self:LoseHeart(self.whoTypes)
+				if not gameEnded then
+					self.whoChoosesLetter = self.whoTypes
+					self:ShowLetterSelection()
+				end
+			end)
+		elseif action == "UpdateTyping" then
+			local chairIndex = self:GetPlayerIndex(player)
+			if chairIndex == self.whoTypes then
+				for i = 1, self.maxPlayers do
+					if i ~= chairIndex then
+						self.remoteEvent:FireClient(self.players[i], "UpdateOpponentTyping", data)
+					end
+				end
+			end
+		end
+	end)
+end
+
+return TableManager
