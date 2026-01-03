@@ -1,0 +1,961 @@
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local SocialService = game:GetService("SocialService")
+local StarterGui = game:GetService("StarterGui")
+
+local player = Players.LocalPlayer
+repeat task.wait() until player.Character
+local character = player.Character
+local humanoid = character:WaitForChild("Humanoid")
+
+local playerGui = player:WaitForChild("PlayerGui")
+local axeComm = playerGui:WaitForChild("AxeComm", 10)
+if not axeComm then warn("AxeComm not found!") return end
+
+local axeComm2 = playerGui:FindFirstChild("AxeComm2")
+local inventoryGui = playerGui:FindFirstChild("Inventory")
+local shopGui = playerGui:FindFirstChild("Shop")
+local exitGui = playerGui:FindFirstChild("Exit")
+local matchResultGui = playerGui:FindFirstChild("Matchreselta")
+local errorLabel = axeComm:FindFirstChild("Error")
+
+local gameplayUI = axeComm:WaitForChild("GameplayUI", 10)
+if not gameplayUI then warn("GameplayUI not found!") return end
+
+local timerFrame = axeComm:WaitForChild("Timer", 10)
+local timerLabel = timerFrame and timerFrame:FindFirstChild("Timer")
+
+local buttonsFolder = gameplayUI:WaitForChild("Buttons", 10)
+if not buttonsFolder then warn("Buttons not found!") return end
+
+local buttonLetter1 = buttonsFolder:FindFirstChild("Letter1")
+local buttonLetter2 = buttonsFolder:FindFirstChild("Letter2")
+local buttonLetter3 = buttonsFolder:FindFirstChild("Letter3")
+local buttonLetter4 = buttonsFolder:FindFirstChild("Letter4")
+
+local topTitle1 = buttonLetter1 and buttonLetter1:FindFirstChild("TopTitle")
+local topTitle2 = buttonLetter2 and buttonLetter2:FindFirstChild("TopTitle")
+local topTitle3 = buttonLetter3 and buttonLetter3:FindFirstChild("TopTitle")
+local topTitle4 = buttonLetter4 and buttonLetter4:FindFirstChild("TopTitle")
+
+local heartFolder = gameplayUI:FindFirstChild("Heart")
+local heart1 = heartFolder and heartFolder:FindFirstChild("hearth1")
+local heart2 = heartFolder and heartFolder:FindFirstChild("hearth2")
+local heart3 = heartFolder and heartFolder:FindFirstChild("hearth3")
+
+local xFolder = gameplayUI:FindFirstChild("X")
+local xAttempts = {}
+if xFolder then
+	for i = 1, 5 do
+		local btn = xFolder:FindFirstChild("Buttons" .. i)
+		if btn then
+			table.insert(xAttempts, btn)
+			btn.Visible = false
+		end
+	end
+end
+
+local winLabel = gameplayUI:FindFirstChild("win")
+
+local matchResultLabels = {}
+if matchResultGui then
+	matchResultLabels.Damage = matchResultGui:FindFirstChild("Damage")
+	matchResultLabels.TotalCoins = matchResultGui:FindFirstChild("TotaleCoins")
+	matchResultLabels.WinBonus = matchResultGui:FindFirstChild("Winbonus")
+	matchResultLabels.CoinsForMatch = matchResultGui:FindFirstChild("coinsformatch")
+	matchResultGui.Enabled = false
+end
+
+local textDisplayGui = Instance.new("ScreenGui")
+textDisplayGui.Name = "TextDisplayGui"
+textDisplayGui.ResetOnSpawn = false
+textDisplayGui.Parent = playerGui
+
+local displayPart = nil
+local displayBillboard = nil
+local displayFrame = nil
+local letterLabels = {}
+
+local function createTextDisplayAboveHead()
+	if displayPart then
+		displayPart:Destroy()
+	end
+
+	displayPart = Instance.new("Part")
+	displayPart.Name = "TextDisplayPart"
+	displayPart.Size = Vector3.new(1, 1, 1)
+	displayPart.Transparency = 1
+	displayPart.CanCollide = false
+	displayPart.Anchored = true
+	displayPart.Parent = workspace
+
+	displayBillboard = Instance.new("BillboardGui")
+	displayBillboard.Size = UDim2.new(0, 600, 0, 100)
+	displayBillboard.Adornee = displayPart
+	displayBillboard.AlwaysOnTop = true
+	displayBillboard.Parent = displayPart
+
+	displayFrame = Instance.new("Frame")
+	displayFrame.Size = UDim2.new(1, 0, 1, 0)
+	displayFrame.BackgroundTransparency = 1
+	displayFrame.Parent = displayBillboard
+
+	local UIListLayout = Instance.new("UIListLayout")
+	UIListLayout.FillDirection = Enum.FillDirection.Horizontal
+	UIListLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	UIListLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+	UIListLayout.Padding = UDim.new(0, 5)
+	UIListLayout.Parent = displayFrame
+end
+
+local function updateDisplayPosition(targetPlayer)
+	if not displayPart then return end
+
+	local char = targetPlayer and targetPlayer.Character or character
+	if not char then return end
+
+	local head = char:FindFirstChild("Head")
+	if head then
+		displayPart.Position = head.Position + Vector3.new(0, 3, 0)
+	end
+end
+
+local function createLetterDisplay(text)
+	if not displayFrame then return end
+
+	for _, label in ipairs(letterLabels) do
+		label:Destroy()
+	end
+	letterLabels = {}
+
+	for i = 1, #text do
+		local char = text:sub(i, i)
+		local label = Instance.new("TextLabel")
+		label.Size = UDim2.new(0, 40, 0, 60)
+		label.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+		label.BackgroundTransparency = 0.2
+		label.BorderSizePixel = 0
+		label.Font = Enum.Font.GothamBold
+		label.TextSize = 36
+		label.TextColor3 = Color3.fromRGB(255, 255, 255)
+		label.Text = char
+		label.TextStrokeTransparency = 0.5
+		label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+		label.Parent = displayFrame
+
+		local uiCorner = Instance.new("UICorner")
+		uiCorner.CornerRadius = UDim.new(0, 8)
+		uiCorner.Parent = label
+
+		table.insert(letterLabels, label)
+	end
+end
+
+task.spawn(function()
+	while task.wait(0.1) do
+		if displayPart and displayPart.Parent and currentGameMode == "TYPING" then
+			updateDisplayPosition()
+		end
+	end
+end)
+
+local function shakeScreen()
+	local camera = workspace.CurrentCamera
+	if not camera then return end
+
+	local originalCFrame = camera.CFrame
+	local shakeIntensity = 0.5
+	local shakeDuration = 0.5
+	local shakeSpeed = 50
+
+	task.spawn(function()
+		local startTime = tick()
+		while tick() - startTime < shakeDuration do
+			local offsetX = math.random(-shakeIntensity * 100, shakeIntensity * 100) / 100
+			local offsetY = math.random(-shakeIntensity * 100, shakeIntensity * 100) / 100
+			camera.CFrame = camera.CFrame * CFrame.new(offsetX, offsetY, 0)
+			task.wait(1 / shakeSpeed)
+		end
+	end)
+end
+
+local function animateHeartLoss(heartIndex)
+	local hearts = {heart3, heart2, heart1}
+	local heart = hearts[heartIndex]
+	if not heart then return end
+
+	local originalSize = heart.Size
+	local originalTransparency = heart.BackgroundTransparency
+
+	local tweenInfo = TweenInfo.new(0.5, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out)
+	local shrinkTween = TweenService:Create(heart, tweenInfo, {
+		Size = UDim2.new(originalSize.X.Scale * 0.5, 0, originalSize.Y.Scale * 0.5, 0),
+		BackgroundTransparency = 0.5
+	})
+
+	shrinkTween:Play()
+	shrinkTween.Completed:Wait()
+
+	task.wait(0.2)
+	heart.Visible = false
+end
+
+local guiPart = workspace:FindFirstChild("Gui", true)
+local gui1TextLabel = nil
+if guiPart then
+	local gui1 = guiPart:FindFirstChild("gui1")
+	if gui1 then
+		gui1TextLabel = gui1:FindFirstChild("TextLabel")
+	end
+end
+
+local exitButton = exitGui and exitGui:FindFirstChild("TextButton")
+local addFriendButton = exitGui and exitGui:FindFirstChild("Addfrend")
+
+if exitButton then exitButton.Visible = false end
+if addFriendButton then addFriendButton.Visible = false end
+if gameplayUI then gameplayUI.Visible = false end
+if winLabel then winLabel.Visible = false end
+if buttonLetter1 then buttonLetter1.Visible = false end
+if buttonLetter2 then buttonLetter2.Visible = false end
+if buttonLetter3 then buttonLetter3.Visible = false end
+if buttonLetter4 then buttonLetter4.Visible = false end
+if exitGui then exitGui.Enabled = false end
+if timerFrame then timerFrame.Visible = false end
+if errorLabel then errorLabel.Visible = false end
+
+local activeRemoteEvents = {}
+local isSeated = false
+local cameraLocked = false
+local cameraConnection = nil
+local currentGameMode = "NONE"
+local currentLetter = ""
+local typingText = ""
+local isMyTurn = false
+
+local function SetResetEnabled(enabled)
+	task.spawn(function()
+		local retries = 0
+		while retries < 10 do
+			local success = pcall(function()
+				StarterGui:SetCore("ResetButtonCallback", enabled)
+			end)
+			if success then break end
+			retries = retries + 1
+			task.wait(0.5)
+		end
+	end)
+end
+
+local function hideAllOtherGUIs()
+	if axeComm2 then axeComm2.Enabled = false end
+	if inventoryGui then inventoryGui.Enabled = false end
+	if shopGui then shopGui.Enabled = false end
+end
+
+local function showAllOtherGUIs()
+	if axeComm2 then axeComm2.Enabled = true end
+	if inventoryGui then inventoryGui.Enabled = true end
+	if shopGui then shopGui.Enabled = true end
+end
+
+local function hideAllXButtons()
+	for _, btn in ipairs(xAttempts) do
+		btn.Visible = false
+	end
+end
+
+local function showXButtons(attempts)
+	hideAllXButtons()
+	for i = 1, attempts do
+		if xAttempts[i] then
+			xAttempts[i].Visible = true
+			local tweenInfo = TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+			local scaleTween = TweenService:Create(xAttempts[i], tweenInfo, {
+				Size = UDim2.new(xAttempts[i].Size.X.Scale, 0, xAttempts[i].Size.Y.Scale, 0)
+			})
+			scaleTween:Play()
+		end
+	end
+end
+
+local function showNoWeaponError(message)
+	if not errorLabel then return end
+
+	errorLabel.Text = message or "Equip a weapon first!"
+	errorLabel.Visible = true
+	errorLabel.TextColor3 = Color3.fromRGB(255, 85, 85)
+	errorLabel.BackgroundColor3 = Color3.fromRGB(50, 0, 0)
+	errorLabel.BackgroundTransparency = 0.3
+
+	shakeScreen()
+
+	local tweenInfo = TweenInfo.new(0.5, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out)
+	local sizeTween = TweenService:Create(errorLabel, tweenInfo, {
+		Size = UDim2.new(errorLabel.Size.X.Scale * 1.1, 0, errorLabel.Size.Y.Scale * 1.1, 0)
+	})
+	sizeTween:Play()
+
+	task.wait(3)
+
+	local fadeInfo = TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+	local fadeTween = TweenService:Create(errorLabel, fadeInfo, {
+		TextTransparency = 1,
+		BackgroundTransparency = 1
+	})
+	fadeTween:Play()
+	fadeTween.Completed:Wait()
+
+	errorLabel.Visible = false
+	errorLabel.TextTransparency = 0
+	errorLabel.BackgroundTransparency = 0.3
+end
+
+local function showMatchResults(data)
+	if not matchResultGui then return end
+
+	matchResultGui.Enabled = true
+
+	if matchResultLabels.Damage then
+		if matchResultLabels.Damage:IsA("TextLabel") or matchResultLabels.Damage:IsA("TextButton") then
+			matchResultLabels.Damage.Text = tostring(data.Damage or 0)
+		end
+	end
+
+	if matchResultLabels.CoinsForMatch then
+		if matchResultLabels.CoinsForMatch:IsA("TextLabel") or matchResultLabels.CoinsForMatch:IsA("TextButton") then
+			matchResultLabels.CoinsForMatch.Text = tostring(data.CoinsForMatch or 0)
+		end
+	end
+
+	if matchResultLabels.WinBonus then
+		if matchResultLabels.WinBonus:IsA("TextLabel") or matchResultLabels.WinBonus:IsA("TextButton") then
+			matchResultLabels.WinBonus.Text = tostring(data.WinBonus or 0)
+		end
+	end
+
+	if matchResultLabels.TotalCoins then
+		if matchResultLabels.TotalCoins:IsA("TextLabel") or matchResultLabels.TotalCoins:IsA("TextButton") then
+			matchResultLabels.TotalCoins.Text = tostring(data.TotalCoins or 0)
+		end
+	end
+
+	task.delay(7, function()
+		if matchResultGui then
+			matchResultGui.Enabled = false
+		end
+	end)
+end
+
+local function playKillSequence(data)
+	local killer = Players:FindFirstChild(data.Killer)
+	local victim = Players:FindFirstChild(data.Victim)
+
+	if not killer or not victim or not killer.Character or not victim.Character then
+		return
+	end
+
+	local camera = workspace.CurrentCamera
+	if not camera then return end
+
+	hideGameplayUI()
+
+	if winLabel then
+		winLabel.Visible = true
+		winLabel.Text = data.Killer .. " eliminated " .. data.Victim .. "!"
+		winLabel.TextColor3 = Color3.fromRGB(255, 85, 85)
+	end
+
+	camera.CameraType = Enum.CameraType.Scriptable
+
+	local killerChar = killer.Character
+	local victimChar = victim.Character
+	local killerHRP = killerChar:FindFirstChild("HumanoidRootPart")
+	local victimHRP = victimChar:FindFirstChild("HumanoidRootPart")
+
+	if not killerHRP or not victimHRP then return end
+
+	local killerHumanoid = killerChar:FindFirstChild("Humanoid")
+	local victimHumanoid = victimChar:FindFirstChild("Humanoid")
+
+	local shootAnimTrack = nil
+	local pointAnimTrack = nil
+
+	if killerHumanoid then
+		local pointAnim = Instance.new("Animation")
+		pointAnim.AnimationId = "rbxassetid://507768375"
+		pointAnimTrack = killerHumanoid:LoadAnimation(pointAnim)
+		pointAnimTrack:Play()
+
+		task.wait(0.5)
+
+		local shootAnim = Instance.new("Animation")
+		shootAnim.AnimationId = "rbxassetid://3152378852"
+		shootAnimTrack = killerHumanoid:LoadAnimation(shootAnim)
+		shootAnimTrack:Play()
+
+		local gunModel = killerChar:FindFirstChild("GunModel")
+		if gunModel then
+			local muzzle = gunModel:FindFirstChild("Muzzle") or gunModel:FindFirstChild("Handle")
+			if muzzle then
+				local muzzleFlash = Instance.new("Part")
+				muzzleFlash.Size = Vector3.new(0.5, 0.5, 0.5)
+				muzzleFlash.CFrame = muzzle.CFrame
+				muzzleFlash.Anchored = true
+				muzzleFlash.CanCollide = false
+				muzzleFlash.Material = Enum.Material.Neon
+				muzzleFlash.BrickColor = BrickColor.new("New Yeller")
+				muzzleFlash.Parent = workspace
+
+				local light = Instance.new("PointLight")
+				light.Brightness = 5
+				light.Range = 15
+				light.Color = Color3.fromRGB(255, 200, 0)
+				light.Parent = muzzleFlash
+
+				task.delay(0.1, function()
+					muzzleFlash:Destroy()
+				end)
+
+				local bullet = Instance.new("Part")
+				bullet.Size = Vector3.new(0.2, 0.2, 1)
+				bullet.CFrame = muzzle.CFrame
+				bullet.Anchored = true
+				bullet.CanCollide = false
+				bullet.Material = Enum.Material.Neon
+				bullet.BrickColor = BrickColor.new("Bright yellow")
+				bullet.Parent = workspace
+
+				local bulletTrail = Instance.new("Trail")
+				local att0 = Instance.new("Attachment")
+				local att1 = Instance.new("Attachment")
+				att0.Parent = bullet
+				att1.Parent = bullet
+				att1.Position = Vector3.new(0, 0, -0.5)
+				bulletTrail.Attachment0 = att0
+				bulletTrail.Attachment1 = att1
+				bulletTrail.Color = ColorSequence.new(Color3.fromRGB(255, 255, 0))
+				bulletTrail.Lifetime = 0.3
+				bulletTrail.Parent = bullet
+
+				local bulletSpeed = 200
+				local direction = (victimHRP.Position - muzzle.Position).Unit
+
+				task.spawn(function()
+					for i = 1, 20 do
+						bullet.CFrame = bullet.CFrame + (direction * bulletSpeed * 0.05)
+						if (bullet.Position - victimHRP.Position).Magnitude < 2 then
+							break
+						end
+						task.wait(0.05)
+					end
+					bullet:Destroy()
+				end)
+			end
+		end
+
+		task.wait(0.3)
+
+		if victimHumanoid then
+			local hitAnim = Instance.new("Animation")
+			hitAnim.AnimationId = "rbxassetid://180436148"
+			local hitTrack = victimHumanoid:LoadAnimation(hitAnim)
+			hitTrack:Play()
+		end
+
+		local blood = Instance.new("Part")
+		blood.Size = Vector3.new(1, 1, 1)
+		blood.CFrame = victimHRP.CFrame
+		blood.Anchored = true
+		blood.CanCollide = false
+		blood.Material = Enum.Material.Neon
+		blood.BrickColor = BrickColor.new("Really red")
+		blood.Transparency = 0.3
+		blood.Parent = workspace
+
+		local particleEmitter = Instance.new("ParticleEmitter")
+		particleEmitter.Texture = "rbxasset://textures/particles/smoke_main.dds"
+		particleEmitter.Color = ColorSequence.new(Color3.fromRGB(255, 0, 0))
+		particleEmitter.Size = NumberSequence.new(0.5)
+		particleEmitter.Lifetime = NumberRange.new(0.5, 1)
+		particleEmitter.Rate = 50
+		particleEmitter.Speed = NumberRange.new(5, 10)
+		particleEmitter.Parent = blood
+		particleEmitter.Enabled = true
+
+		task.delay(0.5, function()
+			particleEmitter.Enabled = false
+			task.wait(1)
+			blood:Destroy()
+		end)
+	end
+
+	local animDuration = 2.5
+	local startTime = tick()
+
+	while tick() - startTime < animDuration do
+		if killerHRP and victimHRP then
+			local offset = Vector3.new(3, 2, 5)
+			local midPoint = (killerHRP.Position + victimHRP.Position) / 2
+			local camPos = midPoint + offset
+			local lookPos = midPoint
+			camera.CFrame = CFrame.lookAt(camPos, lookPos)
+		end
+		task.wait()
+	end
+
+	if shootAnimTrack then shootAnimTrack:Stop() end
+	if pointAnimTrack then pointAnimTrack:Stop() end
+
+	focusOnSelf()
+end
+
+local function focusOnSelf()
+	if cameraConnection then cameraConnection:Disconnect() end
+	local camera = workspace.CurrentCamera
+	if not camera then return end
+
+	camera.CameraType = Enum.CameraType.Scriptable
+	cameraLocked = true
+
+	cameraConnection = RunService.RenderStepped:Connect(function()
+		if not character or not character:FindFirstChild("Head") then return end
+		local head = character.Head
+		local root = character:FindFirstChild("HumanoidRootPart")
+		if not root then return end
+
+		local lookDirection = root.CFrame.LookVector
+		local camPos = head.Position + (lookDirection * 4) + Vector3.new(0, 1.5, 0)
+		local lookAt = head.Position
+		camera.CFrame = camera.CFrame:Lerp(CFrame.lookAt(camPos, lookAt), 0.15)
+		camera.FieldOfView = 75
+	end)
+end
+
+local function focusOnPlayer(playerName)
+	if cameraConnection then cameraConnection:Disconnect() end
+	local camera = workspace.CurrentCamera
+	if not camera then return end
+
+	local targetPlayer = Players:FindFirstChild(playerName)
+	if not targetPlayer or not targetPlayer.Character then 
+		focusOnSelf()
+		return 
+	end
+
+	camera.CameraType = Enum.CameraType.Scriptable
+	cameraLocked = true
+
+	cameraConnection = RunService.RenderStepped:Connect(function()
+		if not targetPlayer or not targetPlayer.Character then 
+			focusOnSelf()
+			return 
+		end
+
+		local targetHead = targetPlayer.Character:FindFirstChild("Head")
+		local targetRoot = targetPlayer.Character:FindFirstChild("HumanoidRootPart")
+		if not targetHead or not targetRoot then 
+			focusOnSelf()
+			return 
+		end
+
+		local lookDirection = targetRoot.CFrame.LookVector
+		local camPos = targetHead.Position + (lookDirection * 5) + Vector3.new(0, 2, 0)
+		local lookAt = targetHead.Position
+		camera.CFrame = camera.CFrame:Lerp(CFrame.lookAt(camPos, lookAt), 0.1)
+		camera.FieldOfView = 70
+	end)
+end
+
+local function unlockCamera()
+	local camera = workspace.CurrentCamera
+	if not camera then return end
+
+	cameraLocked = false
+	camera.CameraType = Enum.CameraType.Custom
+	UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+	if cameraConnection then
+		cameraConnection:Disconnect()
+		cameraConnection = nil
+	end
+end
+
+local function hideGameplayUI()
+	if buttonLetter1 then buttonLetter1.Visible = false end
+	if buttonLetter2 then buttonLetter2.Visible = false end
+	if buttonLetter3 then buttonLetter3.Visible = false end
+	if buttonLetter4 then buttonLetter4.Visible = false end
+	if winLabel then winLabel.Visible = false end
+	if timerFrame then timerFrame.Visible = false end
+	if displayPart then displayPart.Parent = nil end
+	hideAllXButtons()
+end
+
+local function updateTextDisplay(text, targetPlayer)
+	createLetterDisplay(text)
+	if displayPart then
+		displayPart.Parent = workspace
+		updateDisplayPosition(targetPlayer)
+	end
+end
+
+local function showRPS()
+	hideGameplayUI()
+	if axeComm then axeComm.Enabled = true end
+	if gameplayUI then gameplayUI.Visible = true end
+	if buttonLetter1 and topTitle1 then 
+		buttonLetter1.Visible = true 
+		topTitle1.Text = "🪨" 
+	end
+	if buttonLetter2 and topTitle2 then 
+		buttonLetter2.Visible = true 
+		topTitle2.Text = "📄" 
+	end
+	if buttonLetter3 and topTitle3 then 
+		buttonLetter3.Visible = true 
+		topTitle3.Text = "✂️" 
+	end
+	if buttonLetter4 then buttonLetter4.Visible = false end
+	currentGameMode = "RPS"
+	isMyTurn = false
+end
+
+local function showLetterChoice(letters)
+	hideGameplayUI()
+	if axeComm then axeComm.Enabled = true end
+	if gameplayUI then gameplayUI.Visible = true end
+
+	if buttonLetter1 and topTitle1 then 
+		buttonLetter1.Visible = true 
+		topTitle1.Text = letters[1] or "A"
+	end
+	if buttonLetter2 and topTitle2 then 
+		buttonLetter2.Visible = true 
+		topTitle2.Text = letters[2] or "B"
+	end
+	if buttonLetter3 and topTitle3 then 
+		buttonLetter3.Visible = true 
+		topTitle3.Text = letters[3] or "C"
+	end
+	if buttonLetter4 and topTitle4 then 
+		buttonLetter4.Visible = true 
+		topTitle4.Text = letters[4] or "D"
+	end
+
+	currentGameMode = "LETTER_CHOICE"
+	isMyTurn = true
+end
+
+local function showWaitingForLetter()
+	hideGameplayUI()
+	if axeComm then axeComm.Enabled = true end
+	if gameplayUI then gameplayUI.Visible = true end
+	if winLabel then
+		winLabel.Visible = true
+		winLabel.Text = "Waiting for letter..."
+		winLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+	end
+	currentGameMode = "WAITING_LETTER"
+	isMyTurn = false
+end
+
+local function showTypingMode(letter)
+	hideGameplayUI()
+	createTextDisplayAboveHead()
+	if axeComm then axeComm.Enabled = true end
+	if gameplayUI then gameplayUI.Visible = true end
+	if timerFrame then timerFrame.Visible = true end
+
+	showXButtons(5)
+
+	currentLetter = letter
+	typingText = ""
+	updateTextDisplay(currentLetter, player)
+	currentGameMode = "TYPING"
+	isMyTurn = true
+end
+
+local function showWaitingForTyping(playerName)
+	hideGameplayUI()
+	createTextDisplayAboveHead()
+	if axeComm then axeComm.Enabled = true end
+	if gameplayUI then gameplayUI.Visible = true end
+	if timerFrame then timerFrame.Visible = true end
+
+	showXButtons(5)
+
+	if winLabel then
+		winLabel.Visible = true
+		winLabel.Text = playerName .. " is typing..."
+		winLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+	end
+
+	local targetPlayer = Players:FindFirstChild(playerName)
+	if targetPlayer then
+		updateTextDisplay("", targetPlayer)
+	end
+
+	currentGameMode = "WAITING_TYPING"
+	isMyTurn = false
+end
+
+local function showResult(message)
+	hideGameplayUI()
+	if axeComm then axeComm.Enabled = true end
+	if gameplayUI then gameplayUI.Visible = true end
+	if winLabel then
+		winLabel.Visible = true
+		winLabel.Text = message
+		winLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+	end
+	currentGameMode = "RESULT"
+	isMyTurn = false
+end
+
+local function showError(message)
+	shakeScreen()
+	if winLabel then
+		winLabel.Visible = true
+		winLabel.Text = message
+		winLabel.TextColor3 = Color3.fromRGB(255, 85, 85)
+		task.delay(2, function()
+			if winLabel then winLabel.Visible = false end
+		end)
+	end
+end
+
+local function handleButtonClick(choice)
+	if currentGameMode == "RPS" then
+		for _, evt in pairs(activeRemoteEvents) do
+			evt:FireServer("MakeChoice", choice)
+		end
+		hideGameplayUI()
+		showResult("Waiting for others...")
+	elseif currentGameMode == "LETTER_CHOICE" and isMyTurn then
+		local letter = ""
+		if choice == "A" and topTitle1 then letter = topTitle1.Text
+		elseif choice == "B" and topTitle2 then letter = topTitle2.Text
+		elseif choice == "C" and topTitle3 then letter = topTitle3.Text
+		elseif choice == "D" and topTitle4 then letter = topTitle4.Text end
+
+		if letter ~= "" then
+			for _, evt in pairs(activeRemoteEvents) do
+				evt:FireServer("ChooseLetter", letter)
+			end
+			hideGameplayUI()
+			showResult("Letter selected: " .. letter)
+			isMyTurn = false
+		end
+	end
+end
+
+if buttonLetter1 then 
+	buttonLetter1.MouseButton1Click:Connect(function() handleButtonClick("A") end) 
+end
+if buttonLetter2 then 
+	buttonLetter2.MouseButton1Click:Connect(function() handleButtonClick("B") end) 
+end
+if buttonLetter3 then 
+	buttonLetter3.MouseButton1Click:Connect(function() handleButtonClick("C") end) 
+end
+if buttonLetter4 then 
+	buttonLetter4.MouseButton1Click:Connect(function() handleButtonClick("D") end) 
+end
+
+if exitButton then
+	exitButton.MouseButton1Click:Connect(function()
+		for _, evt in pairs(activeRemoteEvents) do
+			evt:FireServer("ExitChair")
+		end
+	end)
+end
+
+if addFriendButton then
+	addFriendButton.MouseButton1Click:Connect(function()
+		pcall(function() SocialService:PromptGameInvite(player) end)
+	end)
+end
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+	if gameProcessed then return end
+	if currentGameMode ~= "TYPING" or not isMyTurn then return end
+
+	if input.KeyCode == Enum.KeyCode.Return or input.KeyCode == Enum.KeyCode.KeypadEnter then
+		if typingText ~= "" then
+			local fullWord = currentLetter .. typingText
+			for _, evt in pairs(activeRemoteEvents) do
+				evt:FireServer("SubmitWord", fullWord)
+			end
+			typingText = ""
+			updateTextDisplay(currentLetter, player)
+			isMyTurn = false
+		end
+	elseif input.KeyCode == Enum.KeyCode.Backspace then
+		if #typingText > 0 then
+			typingText = string.sub(typingText, 1, -2)
+			updateTextDisplay(currentLetter .. typingText, player)
+			for _, evt in pairs(activeRemoteEvents) do
+				evt:FireServer("UpdateTyping", currentLetter .. typingText)
+			end
+		end
+	elseif input.UserInputType == Enum.UserInputType.Keyboard then
+		local keyName = input.KeyCode.Name
+		if keyName == "Space" then
+			typingText = typingText .. " "
+			updateTextDisplay(currentLetter .. typingText, player)
+			for _, evt in pairs(activeRemoteEvents) do
+				evt:FireServer("UpdateTyping", currentLetter .. typingText)
+			end
+		elseif #keyName == 1 then
+			local char = keyName:upper()
+			typingText = typingText .. char
+			updateTextDisplay(currentLetter .. typingText, player)
+			for _, evt in pairs(activeRemoteEvents) do
+				evt:FireServer("UpdateTyping", currentLetter .. typingText)
+			end
+		end
+	end
+end)
+
+local function setupRemoteEvent(eventName)
+	local remoteEvent = ReplicatedStorage:WaitForChild(eventName, 5)
+	if not remoteEvent then return end
+
+	table.insert(activeRemoteEvents, remoteEvent)
+
+	remoteEvent.OnClientEvent:Connect(function(action, data)
+		if action == "LockCamera" then
+			if data then focusOnSelf() else unlockCamera() end
+		elseif action == "UpdateSeatStatus" then
+			isSeated = data
+			if data then
+				SetResetEnabled(false)
+				hideAllOtherGUIs()
+				if exitGui then exitGui.Enabled = true end
+				if character and character:FindFirstChild("Humanoid") then
+					character.Humanoid.WalkSpeed = 0
+					character.Humanoid.JumpPower = 0
+				end
+			else
+				SetResetEnabled(true)
+				showAllOtherGUIs()
+				if exitButton then exitButton.Visible = false end
+				if addFriendButton then addFriendButton.Visible = false end
+				if exitGui then exitGui.Enabled = false end
+				if character and character:FindFirstChild("Humanoid") then
+					character.Humanoid.WalkSpeed = 16
+					character.Humanoid.JumpPower = 50
+				end
+			end
+		elseif action == "ShowRPS" then
+			showRPS()
+		elseif action == "ShowLetterChoice" then
+			showLetterChoice(data)
+		elseif action == "WaitingForLetter" then
+			showWaitingForLetter()
+		elseif action == "StartTyping" then
+			showTypingMode(data)
+		elseif action == "WaitingForTyping" then
+			showWaitingForTyping(data)
+		elseif action == "HideAllGUI" then
+			if axeComm then axeComm.Enabled = false end
+			if gameplayUI then gameplayUI.Visible = false end
+			hideGameplayUI()
+			showAllOtherGUIs()
+			if exitGui then exitGui.Enabled = false end
+			if matchResultGui then matchResultGui.Enabled = false end
+			currentGameMode = "NONE"
+			isMyTurn = false
+		elseif action == "ShowRPSResult" then
+			showResult(data)
+		elseif action == "StartRound" then
+			showResult("Round starting with letter " .. data)
+			currentGameMode = "PLAYING"
+		elseif action == "UpdateHearts" then
+			if heart1 then heart1.Visible = data >= 1 end
+			if heart2 then heart2.Visible = data >= 2 end
+			if heart3 then heart3.Visible = data >= 3 end
+		elseif action == "AnimateHeartLoss" then
+			animateHeartLoss(data)
+		elseif action == "UpdateXAttempts" then
+			showXButtons(data)
+		elseif action == "ShowExitButton" then
+			if exitButton and isSeated then exitButton.Visible = data end
+		elseif action == "ShowAddFriend" then
+			if addFriendButton and isSeated then addFriendButton.Visible = data end
+		elseif action == "PlayerSat" then
+			isSeated = data
+		elseif action == "ShowError" then
+			showError(data)
+		elseif action == "ShowNoWeaponError" then
+			showNoWeaponError(data)
+		elseif action == "FocusCameraOnSelf" then
+			focusOnSelf()
+		elseif action == "FocusCameraOnPlayer" then
+			focusOnPlayer(data)
+		elseif action == "ClearTypingText" then
+			typingText = ""
+			updateTextDisplay(currentLetter, player)
+		elseif action == "UpdateTimer" then
+			if timerLabel and timerFrame then
+				timerFrame.Visible = data > 0
+				if data > 0 then
+					timerLabel.Text = tostring(data) .. " Seconds Left"
+				end
+			end
+		elseif action == "UpdateOpponentTyping" then
+			if not isMyTurn then
+				local typingPlayerName = ""
+				for _, p in pairs(Players:GetPlayers()) do
+					if p ~= player then
+						typingPlayerName = p.Name
+						break
+					end
+				end
+				local targetPlayer = Players:FindFirstChild(typingPlayerName)
+				if targetPlayer then
+					updateTextDisplay(data, targetPlayer)
+				end
+			end
+		elseif action == "ClearDisplay" then
+			if displayPart then
+				displayPart.Parent = nil
+			end
+		elseif action == "ShowMatchResults" then
+			showMatchResults(data)
+		elseif action == "PlayKillSequence" then
+			playKillSequence(data)
+		end
+	end)
+end
+
+for i = 1, 4 do
+	setupRemoteEvent("ChairEvent_Table" .. i)
+end
+
+for i = 21, 24 do
+	setupRemoteEvent("ChairEvent_Table" .. i)
+end
+
+for i = 41, 44 do
+	setupRemoteEvent("ChairEvent_Table" .. i)
+end
+
+player.CharacterAdded:Connect(function(newChar)
+	character = newChar
+	humanoid = character:WaitForChild("Humanoid")
+	unlockCamera()
+	isSeated = false
+	isMyTurn = false
+	SetResetEnabled(true)
+	hideGameplayUI()
+	showAllOtherGUIs()
+	currentGameMode = "NONE"
+	typingText = ""
+	currentLetter = ""
+end)
+
+print("✅ CLIENT: Table Client loaded successfully")
