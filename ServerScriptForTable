@@ -1,0 +1,169 @@
+print("🎮 Table System Starting...")
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local DataStoreService = game:GetService("DataStoreService")
+
+local GunService = require(script.Parent.Parent.Modules.GunService)
+local TableConfig = require(ReplicatedStorage.Modules.TableConfig)
+local TableManager = require(script.Parent.Parent.Modules.TableManager)
+
+local playerDataStore = DataStoreService:GetDataStore("PlayerInventoryData")
+local playerDataCache = {}
+
+local function safeGetAsync(key, retries)
+	retries = retries or 3
+	local waitTime = 1
+	for i = 1, retries do
+		local success, result = pcall(function()
+			return playerDataStore:GetAsync(key)
+		end)
+		if success then return result end
+		task.wait(waitTime)
+		waitTime = waitTime * 2
+	end
+	return nil
+end
+
+local function safeUpdateAsync(key, value, retries)
+	retries = retries or 3
+	local waitTime = 1
+	for i = 1, retries do
+		local success = pcall(function()
+			playerDataStore:UpdateAsync(key, function()
+				return value
+			end)
+		end)
+		if success then return end
+		task.wait(waitTime)
+		waitTime = waitTime * 2
+	end
+end
+
+local function loadPlayerData(player)
+	if not player then return end
+	local key = "player_" .. tostring(player.UserId)
+	local data = safeGetAsync(key)
+
+	local leaderstats = player:FindFirstChild("leaderstats")
+	if not leaderstats then
+		leaderstats = Instance.new("Folder")
+		leaderstats.Name = "leaderstats"
+		leaderstats.Parent = player
+	end
+
+	local wins = leaderstats:FindFirstChild("Wins")
+	if not wins then
+		wins = Instance.new("IntValue")
+		wins.Name = "Wins"
+		wins.Parent = leaderstats
+	end
+
+	local cash = leaderstats:FindFirstChild("Cash")
+	if not cash then
+		cash = Instance.new("IntValue")
+		cash.Name = "Cash"
+		cash.Parent = leaderstats
+	end
+
+	if type(data) == "table" then
+		wins.Value = data.Wins or 0
+		cash.Value = data.Cash or 0
+		playerDataCache[player.UserId] = {
+			OwnedGuns = data.OwnedGuns or {},
+			EquippedGun = data.EquippedGun,
+			Wins = data.Wins or 0,
+			Cash = data.Cash or 0
+		}
+		print(string.format(" Loaded data for %s - Gun: %s", player.Name, data.EquippedGun or "None"))
+	else
+		wins.Value = 0
+		cash.Value = 0
+		playerDataCache[player.UserId] = {
+			OwnedGuns = {},
+			EquippedGun = nil,
+			Wins = 0,
+			Cash = 0
+		}
+		print(string.format("📝 Created new data for %s", player.Name))
+	end
+end
+
+local function savePlayerData(player)
+	if not player then return end
+	local data = playerDataCache[player.UserId]
+	if not data then return end
+
+	local leaderstats = player:FindFirstChild("leaderstats")
+	if leaderstats then
+		local wins = leaderstats:FindFirstChild("Wins")
+		local cash = leaderstats:FindFirstChild("Cash")
+		if wins then data.Wins = wins.Value end
+		if cash then data.Cash = cash.Value end
+	end
+
+	local key = "player_" .. tostring(player.UserId)
+	safeUpdateAsync(key, data)
+	print(string.format(" Saved data for %s", player.Name))
+end
+
+local tables = {}
+
+print("🔍 Checking workspace structure...")
+for _, child in ipairs(workspace:GetChildren()) do
+	if string.find(child.Name, "Table") then
+		print(string.format("  Found in workspace: %s", child.Name))
+	end
+end
+
+local allConfigs = TableConfig:GetAllTables()
+print(string.format(" Initializing %d tables...", #allConfigs))
+
+for _, config in ipairs(allConfigs) do
+	print(string.format("🔧 Attempting to initialize: %s (Path: %s)", config.Name, config.Path))
+
+	local tableManager = TableManager.new(config.Path, playerDataCache)
+
+	if tableManager then
+		table.insert(tables, tableManager)
+		print(string.format(" Initialized table: %s (%d players)", config.Name, config.MaxPlayers))
+	else
+		warn(string.format(" Failed to initialize table: %s", config.Name))
+	end
+end
+
+if #tables == 0 then
+	warn("NO TABLES INITIALIZED! Check your workspace structure and paths!")
+	warn("Expected tables in workspace with names like: Table1, Table2, Table21, etc.")
+end
+
+Players.PlayerAdded:Connect(function(player)
+	print(string.format(" Player joined: %s", player.Name))
+	loadPlayerData(player)
+end)
+
+Players.PlayerRemoving:Connect(function(player)
+	print(string.format(" Player leaving: %s", player.Name))
+	savePlayerData(player)
+
+	for _, tableManager in ipairs(tables) do
+		local chairIndex = tableManager:GetPlayerIndex(player)
+		if chairIndex then
+			tableManager:CleanupPlayer(player, chairIndex)
+		end
+	end
+end)
+
+for _, player in pairs(Players:GetPlayers()) do
+	loadPlayerData(player)
+end
+
+print(string.format(" Table Manager System Loaded! %d tables active", #tables))
+
+game:BindToClose(function()
+	print("💾 Saving all player data...")
+	for _, player in pairs(Players:GetPlayers()) do
+		savePlayerData(player)
+	end
+	task.wait(2)
+end)
